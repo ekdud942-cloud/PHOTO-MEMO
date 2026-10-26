@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>포토 메모장</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #fff; --text: #1d2129; --sub: #7a828f;
+    --line: #e1e4e8; --accent: #4f6ef7; --accent-bg: #eef1ff; --danger: #e5484d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14161a; --panel: #1e2126; --text: #e8eaed; --sub: #8b929e;
+      --line: #2e333b; --accent: #7b92ff; --accent-bg: #252b45; --danger: #ff6b70; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Malgun Gothic", system-ui, sans-serif; min-height: 100vh; }
+  .app { display: grid; grid-template-columns: 1fr 240px; gap: 24px;
+    max-width: 1280px; margin: 0 auto; padding: 28px 24px; }
+  @media (max-width: 760px) { .app { grid-template-columns: 1fr; } }
+
+  /* 붙여넣기 칸 */
+  .paste { background: var(--panel); border: 2px dashed var(--line); border-radius: 16px;
+    height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px; color: var(--sub); text-align: center; outline: none; transition: .15s; cursor: text; }
+  .paste:focus, .paste.over { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
+  .paste b { font-size: 17px; color: var(--text); }
+  .paste small { font-size: 13px; }
+  .paste.flash { animation: flash .6s; }
+  @keyframes flash { 0% { background: var(--accent-bg); border-color: var(--accent); } 100% {} }
+
+  .bar { display: flex; align-items: center; justify-content: space-between; margin: 28px 0 12px; }
+  .bar h2 { margin: 0; font-size: 16px; }
+  .bar span { color: var(--sub); font-size: 13px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+  .card { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    overflow: hidden; aspect-ratio: 1; cursor: grab; }
+  .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .card.dragging { opacity: .4; }
+  .card .del { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border: 0; border-radius: 50%;
+    background: rgba(0,0,0,.6); color: #fff; font-size: 15px; cursor: pointer; display: none; line-height: 1; }
+  .card:hover .del { display: block; }
+  .card .tags { position: absolute; left: 6px; bottom: 6px; right: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .tag { background: rgba(0,0,0,.65); color: #fff; font-size: 11px; padding: 2px 7px; border-radius: 10px; cursor: pointer; }
+  .tag:hover { background: var(--danger); }
+  .empty { grid-column: 1/-1; text-align: center; color: var(--sub); padding: 60px 0; }
+
+  /* 선택 / 드래그 / 휴지통 */
+  body { user-select: none; }
+  .grid { min-height: 50vh; align-content: start; }
+  .card.sel { outline: 3px solid var(--accent); outline-offset: -3px; }
+  .card.sel::after { content: "✓"; position: absolute; top: 6px; left: 6px; width: 22px; height: 22px;
+    border-radius: 50%; background: var(--accent); color: #fff; font-size: 13px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; }
+  .marquee { position: absolute; z-index: 5; border: 1px solid var(--accent); background: rgba(79,110,247,.15);
+    pointer-events: none; }
+  .paste .trashmsg { display: none; }
+  .paste.trash { border-color: var(--danger); border-style: solid; color: var(--danger); }
+  .paste.trash .normal { display: none; }
+  .paste.trash .trashmsg { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .paste.trash .trashmsg span { font-size: 40px; line-height: 1; }
+  .paste.trash.over { background: var(--danger); color: #fff; border-color: var(--danger); }
+  .paste .normal { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #222; color: #fff;
+    padding: 10px 18px; border-radius: 20px; font-size: 14px; z-index: 20; opacity: 0; transition: opacity .2s;
+    pointer-events: none; }
+  .toast.on { opacity: 1; }
+
+  /* 카테고리 */
+  .side { display: flex; flex-direction: column; gap: 12px; }
+  .side h2 { margin: 0 0 2px; font-size: 16px; }
+  .cat { position: relative; aspect-ratio: 1; background: var(--panel); border: 2px solid var(--line);
+    border-radius: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px; cursor: pointer; transition: .15s; padding: 10px; text-align: center; }
+  .cat:hover { border-color: var(--accent); }
+  .cat.active { border-color: var(--accent); background: var(--accent-bg); }
+  .cat.over { border-color: var(--accent); background: var(--accent-bg); transform: scale(1.04); }
+  .cat .name { font-weight: 700; font-size: 16px; word-break: keep-all; }
+  .cat .cnt { color: var(--sub); font-size: 13px; }
+  .cat .x { position: absolute; top: 8px; right: 8px; border: 0; background: none; color: var(--sub);
+    font-size: 16px; cursor: pointer; display: none; }
+  .cat:hover .x { display: block; }
+  .cat .x:hover { color: var(--danger); }
+  .cat.add { border-style: dashed; color: var(--sub); font-size: 36px; aspect-ratio: auto; height: 80px; }
+  .cat.all { aspect-ratio: auto; height: 64px; flex-direction: row; gap: 10px; }
+
+  /* 로그인 */
+  .login { position: fixed; inset: 0; background: var(--bg); z-index: 30; display: flex;
+    align-items: center; justify-content: center; }
+  .login .box { background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    padding: 36px 40px; text-align: center; max-width: 340px; }
+  .login h1 { margin: 0 0 12px; font-size: 22px; }
+  .login p { color: var(--sub); font-size: 14px; line-height: 1.6; }
+  .login button { margin-top: 8px; padding: 12px 22px; border: 0; border-radius: 10px; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 15px; font-weight: 700; }
+  .login .err { color: var(--danger); min-height: 1em; }
+  .user { margin-top: 8px; font-size: 13px; color: var(--sub); display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .user button { border: 1px solid var(--line); background: var(--panel); color: var(--text);
+    border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+
+  /* 확대 */
+  .viewer { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; align-items: center;
+    justify-content: center; z-index: 10; cursor: zoom-out; }
+  .viewer.on { display: flex; }
+  .viewer img { max-width: 94vw; max-height: 94vh; border-radius: 8px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <main>
+    <div class="paste" id="paste" tabindex="0">
+      <div class="normal">
+        <b>여기를 클릭하고 Ctrl + V</b>
+        <small>캡쳐 후 붙여넣으면 바로 저장돼요 · 파일을 끌어다 놓아도 돼요</small>
+      </div>
+      <div class="trashmsg"><span>🗑</span><b>여기에 놓으면 삭제돼요</b></div>
+    </div>
+
+    <div class="bar">
+      <h2 id="title">전체 보기</h2>
+      <span id="count"></span>
+    </div>
+    <div class="grid" id="grid"></div>
+  </main>
+
+  <aside class="side">
+    <h2>카테고리</h2>
+    <div class="cat all" id="allBtn"><span class="name">전체</span><span class="cnt" id="allCnt"></span></div>
+    <div id="cats" style="display:contents"></div>
+    <div class="cat add" id="addCat" title="카테고리 추가">+</div>
+    <div class="user"><span id="userName"></span><button id="logoutBtn">로그아웃</button></div>
+  </aside>
+</div>
+<div class="login" id="login">
+  <div class="box">
+    <h1>포토 메모장</h1>
+    <p>구글 계정으로 로그인하면<br>내가 올린 사진만 내 계정에 저장돼요.</p>
+    <button id="loginBtn">Google로 로그인</button>
+    <p id="loginErr" class="err"></p>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<div class="viewer" id="viewer"><img id="viewerImg" alt=""></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, setDoc, deleteDoc, getDocs }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+// ---------- Firebase 설정 (Firebase 콘솔 > 프로젝트 설정 > 내 앱 에서 복사해 붙여넣기) ----------
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT",
+  appId: "YOUR_APP_ID",
+};
+
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp);
+const fs = getFirestore(fbApp);
+
+// ---------- 저장소 (Firestore: 로그인한 계정 폴더 users/{uid} 아래에만 저장) ----------
+const blobToDataURL = b => new Promise(res => {
+  const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b);
+});
+
+// Firestore 문서 1MB 제한 때문에 사진을 JPEG로 줄여서 저장
+async function shrink(blob) {
+  const bmp = await createImageBitmap(blob);
+  let scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height)), q = 0.85, url;
+  for (let i = 0; i < 8; i++) {
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    url = c.toDataURL("image/jpeg", q);
+    if (url.length < 900000) break;
+    scale *= 0.8; q = Math.max(0.5, q - 0.08);
+  }
+  return url;
+}
+
+const DB = (() => {
+  const col = s => collection(fs, "users", auth.currentUser.uid, s);
+  return {
+    all: async s => {
+      const snap = await getDocs(col(s));
+      const rows = snap.docs.map(d => d.data());
+      if (s !== "photos") return rows;
+      return Promise.all(rows.map(async r => {
+        const blob = await (await fetch(r.data)).blob();
+        return { id: r.id, blob, cats: r.cats || [], created: r.created, _data: r.data };
+      }));
+    },
+    put: async (s, v) => {
+      if (s !== "photos") return setDoc(doc(col(s), v.id), v);
+      if (!v._data) v._data = await shrink(v.blob);
+      return setDoc(doc(col(s), v.id), { id: v.id, data: v._data, cats: v.cats, created: v.created });
+    },
+    del: (s, id) => deleteDoc(doc(col(s), id)),
+  };
+})();
+
+let photos = [], cats = [], current = null; // current: 선택된 카테고리 id, null이면 전체
+const urls = new Map();
+const $ = id => document.getElementById(id);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+const urlOf = p => {
+  if (!urls.has(p.id)) urls.set(p.id, URL.createObjectURL(p.blob));
+  return urls.get(p.id);
+};
+
+// ---------- 사진 추가 ----------
+let addSeq = 0;
+async function addImages(blobs) {
+  for (const blob of blobs) {
+    const p = { id: uid() + (addSeq++), blob, cats: current ? [current] : [], created: Date.now() + addSeq };
+    await DB.put("photos", p);
+    photos.push(p);
+  }
+  render();
+  const el = $("paste");
+  el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+}
+
+function handleItems(items) {
+  // 비동기 작업 전에 파일을 전부 동기적으로 꺼내 둠 (드롭/붙여넣기 데이터는 이벤트 직후 사라짐)
+  const files = [];
+  for (const it of items) {
+    if (it.type && it.type.startsWith("image/")) {
+      const f = it.getAsFile ? it.getAsFile() : it;
+      if (f) files.push(f);
+    }
+  }
+  if (files.length) addImages(files);
+  return files.length;
+}
+
+// 페이지 어디에 놓아도 파일을 받음 (놓치면 브라우저가 이미지를 열어버림)
+document.addEventListener("dragover", e => { if (!dragIds) e.preventDefault(); });
+document.addEventListener("drop", e => {
+  if (dragIds || e.defaultPrevented) return;
+  e.preventDefault();
+  handleItems([...e.dataTransfer.files]);
+});
+
+// ---------- 선택 / 복사 / 삭제 ----------
+const sel = new Set();          // 선택된 사진 id
+let visibleIds = [];            // 지금 화면에 보이는 사진 id
+let dragIds = null;             // 드래그 중인 사진 id들
+let clip = [];                  // 앱 안에서 Ctrl+C 한 사진 id들
+const MARK = "photo-memo-copy";
+
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("on");
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 1600);
+}
+
+function syncSel() {
+  document.querySelectorAll(".card").forEach(c => c.classList.toggle("sel", sel.has(c.dataset.id)));
+  $("count").textContent = visibleIds.length + "장" + (sel.size ? ` · ${sel.size}장 선택됨` : "");
+}
+
+async function deleteMany(ids) {
+  for (const id of ids) {
+    await DB.del("photos", id);
+    photos = photos.filter(x => x.id !== id);
+    if (urls.has(id)) { URL.revokeObjectURL(urls.get(id)); urls.delete(id); }
+    sel.delete(id);
+  }
+  render();
+  toast(`${ids.length}장 삭제했어요`);
+}
+
+async function pasteCopies() {
+  const made = [];
+  let i = 0;
+  for (const id of clip) {
+    const src = photos.find(p => p.id === id);
+    if (!src) continue;
+    const p = { id: uid(), blob: src.blob, _data: src._data, cats: current ? [current] : [...src.cats], created: Date.now() + i++ };
+    await DB.put("photos", p); photos.push(p); made.push(p.id);
+  }
+  if (!made.length) return;
+  sel.clear(); made.forEach(id => sel.add(id));
+  render();
+  toast(`${made.length}장 복사해서 붙여넣었어요`);
+}
+
+// 클립보드엔 실제 이미지(PNG)를 넣어서 ChatGPT 등 다른 곳에도 붙여넣을 수 있게 함
+let clipSize = -1;              // 클립보드에 넣은 PNG 크기 (앱 안 붙여넣기 판별용)
+
+async function toPng(blob) {
+  if (blob.type === "image/png") return blob;
+  const bmp = await createImageBitmap(blob);
+  const c = document.createElement("canvas");
+  c.width = bmp.width; c.height = bmp.height;
+  c.getContext("2d").drawImage(bmp, 0, 0);
+  return new Promise(res => c.toBlob(res, "image/png"));
+}
+
+document.addEventListener("copy", e => {
+  if (!sel.size) return;
+  clip = [...sel];
+  e.preventDefault();
+  const first = photos.find(p => p.id === clip[0]);
+  clipSize = -1;
+  if (first && navigator.clipboard && window.ClipboardItem) {
+    toPng(first.blob).then(png => {
+      clipSize = png.size;
+      return navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+    }).then(
+      () => toast(`${clip.length}장 복사됨` + (clip.length > 1 ? " (다른 앱엔 첫 사진만 붙여넣어져요)" : " · Ctrl+V 로 붙여넣기")),
+      () => toast("복사에 실패했어요")
+    );
+  } else {
+    e.clipboardData.setData("text/plain", MARK);
+    toast(`${clip.length}장 복사됨 · Ctrl+V 로 붙여넣기`);
+  }
+});
+
+document.addEventListener("paste", e => {
+  if (e.target.tagName === "INPUT") return;
+  const files = [...e.clipboardData.items].filter(it => it.type.startsWith("image/"));
+  // 앱에서 복사한 사진이면 새 사진 추가가 아니라 선택한 사진들을 복제
+  if (clip.length && files.length === 1 && files[0].getAsFile().size === clipSize) {
+    e.preventDefault(); pasteCopies(); return;
+  }
+  if (handleItems(e.clipboardData.items)) { e.preventDefault(); return; }
+  if (clip.length && e.clipboardData.getData("text/plain") === MARK) { e.preventDefault(); pasteCopies(); }
+});
+
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+    e.preventDefault(); visibleIds.forEach(id => sel.add(id)); syncSel();
+  } else if (e.key === "Delete" && sel.size) {
+    if (confirm(`선택한 ${sel.size}장을 삭제할까요?`)) deleteMany([...sel]);
+  } else if (e.key === "Escape") { sel.clear(); syncSel(); }
+});
+
+// 빈 곳에서 드래그하면 네모 영역 안의 사진이 한 번에 선택됨
+document.addEventListener("mousedown", e => {
+  if (e.button !== 0 || e.target.closest(".card,.side,.paste,.viewer,button")) return;
+  const sx = e.pageX, sy = e.pageY, add = e.ctrlKey || e.shiftKey;
+  const base = new Set(add ? sel : []);
+  if (!add) { sel.clear(); syncSel(); }
+  let box = null;
+  const move = ev => {
+    if (!box) {
+      if (Math.abs(ev.pageX - sx) + Math.abs(ev.pageY - sy) < 5) return;
+      box = document.createElement("div"); box.className = "marquee"; document.body.appendChild(box);
+    }
+    const x1 = Math.min(sx, ev.pageX), y1 = Math.min(sy, ev.pageY);
+    const x2 = Math.max(sx, ev.pageX), y2 = Math.max(sy, ev.pageY);
+    Object.assign(box.style, { left: x1 + "px", top: y1 + "px", width: x2 - x1 + "px", height: y2 - y1 + "px" });
+    sel.clear(); base.forEach(id => sel.add(id));
+    document.querySelectorAll(".card").forEach(c => {
+      const r = c.getBoundingClientRect();
+      const l = r.left + scrollX, t = r.top + scrollY;
+      if (l < x2 && l + r.width > x1 && t < y2 && t + r.height > y1) sel.add(c.dataset.id);
+    });
+    syncSel();
+  };
+  const up = () => {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+    if (box) box.remove();
+  };
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
+  e.preventDefault();
+});
+
+// ---------- 위쪽 박스: 평소엔 붙여넣기, 드래그 중엔 휴지통 ----------
+const pasteBox = $("paste");
+pasteBox.addEventListener("dragover", e => { e.preventDefault(); pasteBox.classList.add("over"); });
+pasteBox.addEventListener("dragleave", () => pasteBox.classList.remove("over"));
+pasteBox.addEventListener("drop", e => {
+  e.preventDefault(); pasteBox.classList.remove("over");
+  if (dragIds) deleteMany(dragIds);
+  else if (e.dataTransfer.files.length) handleItems([...e.dataTransfer.files]);
+});
+
+// ---------- 렌더링 ----------
+function render() {
+  const list = (current ? photos.filter(p => p.cats.includes(current)) : photos)
+    .slice().sort((a, b) => b.created - a.created);
+  const cur = cats.find(c => c.id === current);
+  $("title").textContent = cur ? cur.name : "전체 보기";
+  visibleIds = list.map(p => p.id);
+  for (const id of [...sel]) if (!photos.some(p => p.id === id)) sel.delete(id);
+  $("allCnt").textContent = photos.length + "장";
+  $("allBtn").classList.toggle("active", !current);
+
+  const grid = $("grid");
+  grid.innerHTML = "";
+  if (!list.length) {
+    grid.innerHTML = '<div class="empty">아직 사진이 없어요. 캡쳐 후 Ctrl + V 해보세요.</div>';
+  }
+  for (const p of list) {
+    const d = document.createElement("div");
+    d.className = "card"; d.draggable = true;
+    const tags = p.cats.map(id => cats.find(c => c.id === id)).filter(Boolean)
+      .map(c => `<span class="tag" data-c="${c.id}" title="클릭하면 이 카테고리에서 빼기">${esc(c.name)}</span>`).join("");
+    d.innerHTML = `<img src="${urlOf(p)}" alt=""><button class="del" title="삭제">×</button><div class="tags">${tags}</div>`;
+    d.dataset.id = p.id;
+    d.addEventListener("dragstart", e => {
+      if (!sel.has(p.id)) { sel.clear(); sel.add(p.id); syncSel(); }
+      dragIds = [...sel];
+      e.dataTransfer.setData("text/plain", MARK);
+      e.dataTransfer.effectAllowed = "move";
+      if (dragIds.length > 1) {
+        const b = document.createElement("div");
+        b.textContent = dragIds.length + "장";
+        b.style.cssText = "position:fixed;top:-100px;padding:10px 16px;background:#4f6ef7;color:#fff;border-radius:10px;font:700 15px sans-serif";
+        document.body.appendChild(b); e.dataTransfer.setDragImage(b, 20, 20);
+        setTimeout(() => b.remove());
+      }
+      document.querySelectorAll(".card.sel").forEach(c => c.classList.add("dragging"));
+      pasteBox.classList.add("trash");
+    });
+    d.addEventListener("dragend", () => {
+      dragIds = null;
+      pasteBox.classList.remove("trash", "over");
+      document.querySelectorAll(".card.dragging").forEach(c => c.classList.remove("dragging"));
+    });
+    d.addEventListener("click", e => {
+      if (e.target.closest(".tag,.del")) return;
+      sel.has(p.id) ? sel.delete(p.id) : sel.add(p.id);
+      syncSel();
+    });
+    d.addEventListener("dblclick", () => { $("viewerImg").src = urlOf(p); $("viewer").classList.add("on"); });
+    d.querySelector(".del").addEventListener("click", () => {
+      if (confirm("이 사진을 삭제할까요?")) deleteMany([p.id]);
+    });
+    d.querySelectorAll(".tag").forEach(t => t.addEventListener("click", async () => {
+      p.cats = p.cats.filter(id => id !== t.dataset.c);
+      await DB.put("photos", p); render();
+    }));
+    grid.appendChild(d);
+  }
+
+  const box = $("cats");
+  box.innerHTML = "";
+  for (const c of cats) {
+    const n = photos.filter(p => p.cats.includes(c.id)).length;
+    const d = document.createElement("div");
+    d.className = "cat" + (c.id === current ? " active" : "");
+    d.innerHTML = `<button class="x" title="카테고리 삭제">×</button><span class="name">${esc(c.name)}</span><span class="cnt">${n}장</span>`;
+    d.addEventListener("click", () => { current = c.id; render(); });
+    d.querySelector(".x").addEventListener("click", async e => {
+      e.stopPropagation();
+      if (!confirm(`"${c.name}" 카테고리를 삭제할까요? (사진은 전체 보기에 남아요)`)) return;
+      await DB.del("cats", c.id);
+      cats = cats.filter(x => x.id !== c.id);
+      for (const p of photos) if (p.cats.includes(c.id)) { p.cats = p.cats.filter(i => i !== c.id); await DB.put("photos", p); }
+      if (current === c.id) current = null;
+      render();
+    });
+    d.addEventListener("dragover", e => { e.preventDefault(); d.classList.add("over"); });
+    d.addEventListener("dragleave", () => d.classList.remove("over"));
+    d.addEventListener("drop", async e => {
+      e.preventDefault(); d.classList.remove("over");
+      const ids = dragIds || [];
+      for (const id of ids) {
+        const p = photos.find(x => x.id === id);
+        if (p && !p.cats.includes(c.id)) { p.cats.push(c.id); await DB.put("photos", p); }
+      }
+      render();
+      if (ids.length) toast(`${ids.length}장을 "${c.name}"에 넣었어요`);
+    });
+    box.appendChild(d);
+  }
+  syncSel();
+}
+
+const esc = s => s.replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+
+// ---------- 이벤트 ----------
+$("allBtn").addEventListener("click", () => { current = null; render(); });
+$("addCat").addEventListener("click", async () => {
+  const name = (prompt("카테고리 이름 (예: AI 정보, AI 모델)") || "").trim();
+  if (!name) return;
+  const c = { id: uid(), name };
+  await DB.put("cats", c); cats.push(c); render();
+});
+$("viewer").addEventListener("click", () => $("viewer").classList.remove("on"));
+document.addEventListener("keydown", e => { if (e.key === "Escape") $("viewer").classList.remove("on"); });
+
+// ---------- 시작 ----------
+$("loginBtn").addEventListener("click", () => {
+  signInWithPopup(auth, new GoogleAuthProvider()).catch(e => {
+    if (e.code !== "auth/popup-closed-by-user") $("loginErr").textContent = "로그인 실패: " + e.code;
+  });
+});
+$("logoutBtn").addEventListener("click", () => signOut(auth).then(() => location.reload()));
+
+onAuthStateChanged(auth, async user => {
+  $("login").style.display = user ? "none" : "flex";
+  if (!user) return;
+  $("userName").textContent = user.displayName || user.email;
+  try {
+    photos = await DB.all("photos");
+    cats = await DB.all("cats");
+    if (!cats.length) {
+      for (const name of ["AI 정보", "AI 모델"]) {
+        const c = { id: uid(), name }; await DB.put("cats", c); cats.push(c);
+      }
+    }
+  } catch (e) { toast("불러오기 실패: " + e.code); }
+  render();
+  pasteBox.focus();
+});
+</script>
+</body>
+</html>
