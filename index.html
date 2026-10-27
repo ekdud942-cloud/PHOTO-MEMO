@@ -45,6 +45,8 @@
   .card .tags { position: absolute; left: 6px; bottom: 6px; right: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
   .tag { background: rgba(0,0,0,.65); color: #fff; font-size: 11px; padding: 2px 7px; border-radius: 10px; cursor: pointer; }
   .tag:hover { background: var(--danger); }
+  .dayhead { grid-column: 1/-1; font-size: 17px; font-weight: 700; margin-top: 14px; }
+  .dayhead:first-child { margin-top: 0; }
   .empty { grid-column: 1/-1; text-align: center; color: var(--sub); padding: 60px 0; }
 
   /* 선택 / 드래그 / 휴지통 */
@@ -406,7 +408,15 @@ function render() {
   if (!list.length) {
     grid.innerHTML = '<div class="empty">아직 사진이 없어요. 캡쳐 후 Ctrl + V 해보세요.</div>';
   }
+  let lastDay = "";
   for (const p of list) {
+    const day = dayLabel(p.created);
+    if (day !== lastDay) {
+      lastDay = day;
+      const h = document.createElement("div");
+      h.className = "dayhead"; h.textContent = day;
+      grid.appendChild(h);
+    }
     const d = document.createElement("div");
     d.className = "card"; d.draggable = true;
     const tags = p.cats.map(id => cats.find(c => c.id === id)).filter(Boolean)
@@ -481,6 +491,14 @@ function render() {
     box.appendChild(d);
   }
   syncSel();
+}
+
+// 올린 날짜별 묶음 제목 (예: 10월 24일 (토)) — 올해가 아니면 연도도 표시
+function dayLabel(ts) {
+  const d = new Date(ts);
+  const w = "일월화수목금토"[d.getDay()];
+  const y = d.getFullYear() === new Date().getFullYear() ? "" : d.getFullYear() + "년 ";
+  return `${y}${d.getMonth() + 1}월 ${d.getDate()}일 (${w})`;
 }
 
 const esc = s => s.replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
