@@ -45,6 +45,10 @@
   .card .tags { position: absolute; left: 6px; bottom: 6px; right: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
   .tag { background: rgba(0,0,0,.65); color: #fff; font-size: 11px; padding: 2px 7px; border-radius: 10px; cursor: pointer; }
   .tag:hover { background: var(--danger); }
+  .undo { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 8px;
+    padding: 5px 12px; font-size: 13px; cursor: pointer; margin-right: 8px; }
+  .undo:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .undo:disabled { opacity: .4; cursor: default; }
   .dayhead { grid-column: 1/-1; font-size: 17px; font-weight: 700; margin-top: 14px; }
   .dayhead:first-child { margin-top: 0; }
   .empty { grid-column: 1/-1; text-align: center; color: var(--sub); padding: 60px 0; }
@@ -122,7 +126,7 @@
 
     <div class="bar">
       <h2 id="title">전체 보기</h2>
-      <span id="count"></span>
+      <span><button id="undoBtn" class="undo" disabled title="Ctrl + Z">↶ 되돌리기</button> <span id="count"></span></span>
     </div>
     <div class="grid" id="grid"></div>
   </main>
@@ -223,11 +227,14 @@ const urlOf = p => {
 // ---------- 사진 추가 ----------
 let addSeq = 0;
 async function addImages(blobs) {
+  const added = [];
   for (const blob of blobs) {
     const p = { id: uid() + (addSeq++), blob, cats: current ? [current] : [], created: Date.now() + addSeq };
     await DB.put("photos", p);
     photos.push(p);
+    added.push(p.id);
   }
+  pushUndo(() => removePhotos(added));
   render();
   const el = $("paste");
   el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
@@ -271,13 +278,40 @@ function syncSel() {
   $("count").textContent = visibleIds.length + "장" + (sel.size ? ` · ${sel.size}장 선택됨` : "");
 }
 
-async function deleteMany(ids) {
+// ---------- 되돌리기 (Ctrl+Z / 상단 버튼) ----------
+const undoStack = [];
+function syncUndo() { $("undoBtn").disabled = !undoStack.length; }
+function pushUndo(fn) {
+  undoStack.push(fn);
+  if (undoStack.length > 50) undoStack.shift();
+  syncUndo();
+}
+async function undo() {
+  const fn = undoStack.pop();
+  syncUndo();
+  if (!fn) { toast("되돌릴 작업이 없어요"); return; }
+  await fn();
+  render();
+  toast("되돌렸어요");
+}
+
+async function removePhotos(ids) {
   for (const id of ids) {
     await DB.del("photos", id);
     photos = photos.filter(x => x.id !== id);
     if (urls.has(id)) { URL.revokeObjectURL(urls.get(id)); urls.delete(id); }
     sel.delete(id);
   }
+}
+
+async function restorePhotos(list) {
+  for (const p of list) { await DB.put("photos", p); photos.push(p); }
+}
+
+async function deleteMany(ids) {
+  const gone = photos.filter(p => ids.includes(p.id));
+  await removePhotos(ids);
+  pushUndo(() => restorePhotos(gone));
   render();
   toast(`${ids.length}장 삭제했어요`);
 }
@@ -292,6 +326,7 @@ async function pasteCopies() {
     await DB.put("photos", p); photos.push(p); made.push(p.id);
   }
   if (!made.length) return;
+  pushUndo(() => removePhotos(made));
   sel.clear(); made.forEach(id => sel.add(id));
   render();
   toast(`${made.length}장 복사해서 붙여넣었어요`);
@@ -342,7 +377,9 @@ document.addEventListener("paste", e => {
 
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT") return;
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+    e.preventDefault(); undo();
+  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
     e.preventDefault(); visibleIds.forEach(id => sel.add(id)); syncSel();
   } else if (e.key === "Delete" && sel.size) {
     if (confirm(`선택한 ${sel.size}장을 삭제할까요?`)) deleteMany([...sel]);
@@ -399,7 +436,8 @@ function render() {
   const cur = cats.find(c => c.id === current);
   $("title").textContent = cur ? cur.name : "전체 보기";
   visibleIds = list.map(p => p.id);
-  for (const id of [...sel]) if (!photos.some(p => p.id === id)) sel.delete(id);
+  // 화면에 안 보이는 사진(다른 카테고리 등)은 선택에서 제외 — 드래그할 때 같이 딸려가는 것 방지
+  for (const id of [...sel]) if (!visibleIds.includes(id)) sel.delete(id);
   $("allCnt").textContent = photos.length + "장";
   $("allBtn").classList.toggle("active", !current);
 
@@ -453,8 +491,11 @@ function render() {
       if (confirm("이 사진을 삭제할까요?")) deleteMany([p.id]);
     });
     d.querySelectorAll(".tag").forEach(t => t.addEventListener("click", async () => {
+      const before = [...p.cats];
       p.cats = p.cats.filter(id => id !== t.dataset.c);
-      await DB.put("photos", p); render();
+      await DB.put("photos", p);
+      pushUndo(async () => { p.cats = before; await DB.put("photos", p); });
+      render();
     }));
     grid.appendChild(d);
   }
@@ -472,8 +513,16 @@ function render() {
       if (!confirm(`"${c.name}" 카테고리를 삭제할까요? (사진은 전체 보기에 남아요)`)) return;
       await DB.del("cats", c.id);
       cats = cats.filter(x => x.id !== c.id);
-      for (const p of photos) if (p.cats.includes(c.id)) { p.cats = p.cats.filter(i => i !== c.id); await DB.put("photos", p); }
+      const prev = [];
+      for (const p of photos) if (p.cats.includes(c.id)) {
+        prev.push([p, [...p.cats]]);
+        p.cats = p.cats.filter(i => i !== c.id); await DB.put("photos", p);
+      }
       if (current === c.id) current = null;
+      pushUndo(async () => {
+        await DB.put("cats", c); cats.push(c);
+        for (const [p, old] of prev) { p.cats = old; await DB.put("photos", p); }
+      });
       render();
     });
     d.addEventListener("dragover", e => { e.preventDefault(); d.classList.add("over"); });
@@ -481,10 +530,18 @@ function render() {
     d.addEventListener("drop", async e => {
       e.preventDefault(); d.classList.remove("over");
       const ids = dragIds || [];
+      const prev = [];
       for (const id of ids) {
         const p = photos.find(x => x.id === id);
-        if (p && !p.cats.includes(c.id)) { p.cats.push(c.id); await DB.put("photos", p); }
+        if (p && !p.cats.includes(c.id)) {
+          prev.push([p, [...p.cats]]);
+          p.cats.push(c.id); await DB.put("photos", p);
+        }
       }
+      if (prev.length) pushUndo(async () => {
+        for (const [p, old] of prev) { p.cats = old; await DB.put("photos", p); }
+      });
+      sel.clear();
       render();
       if (ids.length) toast(`${ids.length}장을 "${c.name}"에 넣었어요`);
     });
@@ -509,8 +566,14 @@ $("addCat").addEventListener("click", async () => {
   const name = (prompt("카테고리 이름 (예: AI 정보, AI 모델)") || "").trim();
   if (!name) return;
   const c = { id: uid(), name };
-  await DB.put("cats", c); cats.push(c); render();
+  await DB.put("cats", c); cats.push(c);
+  pushUndo(async () => {
+    await DB.del("cats", c.id); cats = cats.filter(x => x.id !== c.id);
+    if (current === c.id) current = null;
+  });
+  render();
 });
+$("undoBtn").addEventListener("click", undo);
 $("viewer").addEventListener("click", () => $("viewer").classList.remove("on"));
 document.addEventListener("keydown", e => { if (e.key === "Escape") $("viewer").classList.remove("on"); });
 
